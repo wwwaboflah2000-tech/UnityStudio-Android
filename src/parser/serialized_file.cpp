@@ -6,25 +6,35 @@ bool SerializedFile::parse(const uint8_t* raw_data, size_t raw_size, const std::
     file_name = name;
     UnityReader reader(raw_data, raw_size);
 
-    metadata_size = reader.read_u32_be();
-    file_size = reader.read_u32_be();
-    version = reader.read_u32_be();
-    data_offset = reader.read_u32_be();
+    // فحص ذكي لمعرفة هل الملف Unity حديث (64-bit v22+) أم قديم (32-bit v9..v21)
+    reader.set_position(8);
+    uint32_t v_old = reader.read_u32_be();
+    reader.set_position(12);
+    uint32_t v_new = reader.read_u32_be();
 
-    // التحقق المبدئي: هل الترويسة ترويسة ملف أصول Unity صالحة؟
-    if (version == 0 || version > 100) {
-        return false;
-    }
-
-    if (version >= 22) {
+    if (v_new >= 22 && v_new < 100) {
+        // Unity 2020.3+ / 2021 / 2022 / 2023 (64-bit Header)
         if (raw_size < 48) return false;
         reader.set_position(0);
         metadata_size = reader.read_u32_be();
         file_size = reader.read_u64_be();
-        version = reader.read_u32_be();
+        version = v_new;
+        reader.set_position(16);
         data_offset = reader.read_u64_be();
         endianess = reader.read_u8();
         reader.align(4);
+    } else if (v_old >= 1 && v_old < 22) {
+        // Unity 5.x / 2017 / 2018 / 2019 (32-bit Header)
+        reader.set_position(0);
+        metadata_size = reader.read_u32_be();
+        file_size = static_cast<uint64_t>(reader.read_u32_be());
+        version = v_old;
+        reader.set_position(12);
+        data_offset = static_cast<uint64_t>(reader.read_u32_be());
+        endianess = reader.read_u8();
+        reader.align(4);
+    } else {
+        return false;
     }
 
     if (reader.failed()) return false;
@@ -36,30 +46,33 @@ bool SerializedFile::parse(const uint8_t* raw_data, size_t raw_size, const std::
         reader.read_u32_le(); // Target Platform
     }
 
+    // قراءة الـ TypeTree
     if (version >= 13) {
         bool enable_type_tree = reader.read_u8() != 0;
         int32_t type_count = reader.read_i32_le();
 
-        for (int32_t i = 0; i < type_count; ++i) {
-            int32_t class_id = reader.read_i32_le();
-            if (version >= 16) {
-                reader.read_u8();
-            }
-            int16_t script_type_index = -1;
-            if (version >= 17) {
-                script_type_index = static_cast<int16_t>(reader.read_u16_le());
-            }
+        if (type_count > 0 && type_count < 100000) {
+            for (int32_t i = 0; i < type_count; ++i) {
+                int32_t class_id = reader.read_i32_le();
+                if (version >= 16) {
+                    reader.read_u8();
+                }
+                int16_t script_type_index = -1;
+                if (version >= 17) {
+                    script_type_index = static_cast<int16_t>(reader.read_u16_le());
+                }
 
-            if ((version < 16 && class_id < 0) || (version >= 16 && class_id == 114) || (version >= 17 && script_type_index >= 0)) {
+                if ((version < 16 && class_id < 0) || (version >= 16 && class_id == 114) || (version >= 17 && script_type_index >= 0)) {
+                    reader.read_bytes(16);
+                }
                 reader.read_bytes(16);
-            }
-            reader.read_bytes(16);
 
-            if (enable_type_tree) {
-                int32_t node_count = reader.read_i32_le();
-                int32_t string_buffer_size = reader.read_i32_le();
-                size_t node_size = (version >= 19) ? 32 : 24;
-                reader.read_bytes(node_count * node_size + string_buffer_size);
+                if (enable_type_tree) {
+                    int32_t node_count = reader.read_i32_le();
+                    int32_t string_buffer_size = reader.read_i32_le();
+                    size_t node_size = (version >= 19) ? 32 : 24;
+                    reader.read_bytes(node_count * node_size + string_buffer_size);
+                }
             }
         }
     }
@@ -70,8 +83,7 @@ bool SerializedFile::parse(const uint8_t* raw_data, size_t raw_size, const std::
 
     uint32_t object_count = (version >= 14) ? reader.read_u32_be() : reader.read_u32_le();
     
-    // حماية من الأرقام الوهمية
-    if (object_count > 1000000 || reader.failed()) return false;
+    if (object_count == 0 || object_count > 1000000 || reader.failed()) return false;
     
     objects.resize(object_count);
 
