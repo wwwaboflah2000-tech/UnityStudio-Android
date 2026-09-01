@@ -6,6 +6,8 @@ using namespace godot;
 
 void UnityStudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_bundle", "file_path"), &UnityStudio::load_bundle);
+    ClassDB::bind_method(D_METHOD("load_raw_data", "data", "name"), &UnityStudio::load_raw_data);
+    ClassDB::bind_method(D_METHOD("clear_all"), &UnityStudio::clear_all);
     ClassDB::bind_method(D_METHOD("get_internal_files"), &UnityStudio::get_internal_files);
     ClassDB::bind_method(D_METHOD("get_object_count"), &UnityStudio::get_object_count);
     ClassDB::bind_method(D_METHOD("get_game_objects_list"), &UnityStudio::get_game_objects_list);
@@ -13,6 +15,47 @@ void UnityStudio::_bind_methods() {
 
 UnityStudio::UnityStudio() {}
 UnityStudio::~UnityStudio() {}
+
+void UnityStudio::clear_all() {
+    loaded_files.clear();
+    is_loaded = false;
+}
+
+bool UnityStudio::load_raw_data(const PackedByteArray &pba, const String &name) {
+    uint64_t len = pba.size();
+    if (len < 16) return false;
+    const uint8_t* data_ptr = pba.ptr();
+
+    std::string signature;
+    for (size_t i = 0; i < 7 && i < len; ++i) {
+        if (data_ptr[i] == '\0') break;
+        signature += static_cast<char>(data_ptr[i]);
+    }
+
+    if (signature == "UnityFS") {
+        UnityFSArchive archive;
+        if (archive.parse(data_ptr, len)) {
+            for (const auto& node : archive.directory_nodes) {
+                if (node.size == 0) continue;
+                const uint8_t* node_data = archive.decompressed_data.data() + node.offset;
+                SerializedFile sfile;
+                if (sfile.parse(node_data, node.size, node.path)) {
+                    loaded_files.push_back(sfile);
+                }
+            }
+            is_loaded = !loaded_files.empty();
+            return is_loaded;
+        }
+    } else {
+        SerializedFile sfile;
+        if (sfile.parse(data_ptr, len, name.utf8().get_data())) {
+            loaded_files.push_back(sfile);
+            is_loaded = true;
+            return true;
+        }
+    }
+    return false;
+}
 
 bool UnityStudio::load_bundle(const String &file_path) {
     Ref<FileAccess> file = FileAccess::open(file_path, FileAccess::READ);
@@ -22,46 +65,8 @@ bool UnityStudio::load_bundle(const String &file_path) {
     if (len < 16) return false;
 
     PackedByteArray pba = file->get_buffer(len);
-    const uint8_t* data_ptr = pba.ptr();
-
-    loaded_files.clear();
-    is_loaded = false;
-
-    // فحص هل هو UnityFS أم ملف أصول مباشر
-    std::string signature;
-    for (size_t i = 0; i < 7 && i < len; ++i) {
-        if (data_ptr[i] == '\0') break;
-        signature += static_cast<char>(data_ptr[i]);
-    }
-
-    if (signature == "UnityFS") {
-        // فك ضغط الحزمة بالكامل
-        if (current_archive.parse(data_ptr, len)) {
-            // مسح جميع الملفات الداخلية بلا استثناء
-            for (const auto& node : current_archive.directory_nodes) {
-                if (node.size == 0) continue;
-                
-                const uint8_t* node_data = current_archive.decompressed_data.data() + node.offset;
-                SerializedFile sfile;
-                
-                // محاولة قراءة كل ملف كـ SerializedFile
-                if (sfile.parse(node_data, node.size, node.path)) {
-                    loaded_files.push_back(sfile);
-                }
-            }
-            is_loaded = !loaded_files.empty();
-        }
-    } else {
-        // ملف أصول مباشر (مثل sharedassets0.assets أو level0)
-        SerializedFile sfile;
-        String base_name = file_path.get_file();
-        if (sfile.parse(data_ptr, len, base_name.utf8().get_data())) {
-            loaded_files.push_back(sfile);
-            is_loaded = true;
-        }
-    }
-
-    return is_loaded;
+    clear_all();
+    return load_raw_data(pba, file_path.get_file());
 }
 
 PackedStringArray UnityStudio::get_internal_files() {
