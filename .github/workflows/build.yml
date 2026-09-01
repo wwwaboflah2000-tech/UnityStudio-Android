@@ -31,7 +31,21 @@ jobs:
 
       - name: Clone godot-cpp
         run: |
-          git clone --recursive -b master https://github.com/godotengine/godot-cpp.git godot-cpp
+          if [ ! -d "godot-cpp" ]; then
+            git clone --recursive -b master https://github.com/godotengine/godot-cpp.git godot-cpp
+          fi
+
+      # ⚡ ذاكرة التخزين المؤقت لملفات godot-cpp المترجمة ⚡
+      - name: Setup SCons Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            godot-cpp/bin
+            godot-cpp/gen
+            .scons-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.target }}-godot-cpp-cache
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.target }}-godot-cpp-
 
       - name: Build GDExtension for Android
         run: |
