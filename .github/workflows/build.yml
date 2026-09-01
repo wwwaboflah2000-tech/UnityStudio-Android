@@ -1,4 +1,4 @@
-name: 🚀 Build Android GDExtension (Godot Dev)
+name: 🚀 Build Android GDExtension
 
 on:
   push:
@@ -17,33 +17,26 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Download godot-cpp (Master / Dev)
-        run: |
-          git clone --depth 1 https://github.com/godotengine/godot-cpp.git godot-cpp
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install SCons
-        run: python -m pip install scons
+        run: pip install scons
 
-      - name: Set up Android NDK (r28b)
-        id: setup-ndk
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r28b
-          link-to-sdk: true
-
-      - name: Link NDK to Expected Godot Path
+      - name: Install Android NDK 28
         run: |
-          sudo mkdir -p /usr/local/lib/android/sdk/ndk
-          sudo ln -sfn "${{ steps.setup-ndk.outputs.ndk-path }}" /usr/local/lib/android/sdk/ndk/28.1.13356709
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;28.1.13356709"
+
+      - name: Clone godot-cpp
+        run: |
+          git clone --recursive -b master https://github.com/godotengine/godot-cpp.git godot-cpp
 
       - name: Build GDExtension for Android
         run: |
-          scons platform=android target=${{ matrix.target }} arch=${{ matrix.arch }} -j$(nproc)
+          mkdir -p godot_project/bin
+          scons platform=android target=${{ matrix.target }} arch=${{ matrix.arch }} api_version=4.7 ANDROID_HOME=$ANDROID_HOME -j$(nproc)
 
       - name: Upload Android Libraries
         uses: actions/upload-artifact@v4
