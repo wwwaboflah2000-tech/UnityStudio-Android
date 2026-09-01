@@ -25,6 +25,15 @@ jobs:
       - name: Install SCons
         run: pip install scons
 
+      # ⚡ محرك التخزين السريع ccache (المعتمد رسمياً في Godot) ⚡
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.target }}-ccache
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.target }}-ccache
+          max-size: 2G
+
       - name: Install Android NDK 28
         run: |
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;28.1.13356709"
@@ -35,22 +44,10 @@ jobs:
             git clone --recursive -b master https://github.com/godotengine/godot-cpp.git godot-cpp
           fi
 
-      # ⚡ ذاكرة التخزين المؤقت لملفات godot-cpp المترجمة ⚡
-      - name: Setup SCons Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            godot-cpp/bin
-            godot-cpp/gen
-            .scons-cache
-          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.target }}-godot-cpp-cache
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.target }}-godot-cpp-
-
-      - name: Build GDExtension for Android
+      - name: Build GDExtension for Android (with ccache)
         run: |
           mkdir -p godot_project/bin
-          scons platform=android target=${{ matrix.target }} arch=${{ matrix.arch }} api_version=4.7 ANDROID_HOME=$ANDROID_HOME -j$(nproc)
+          scons platform=android target=${{ matrix.target }} arch=${{ matrix.arch }} api_version=4.7 ANDROID_HOME=$ANDROID_HOME use_ccache=yes -j$(nproc)
 
       - name: Upload Android Libraries
         uses: actions/upload-artifact@v4
