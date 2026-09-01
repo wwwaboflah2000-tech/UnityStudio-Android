@@ -3,13 +3,15 @@ import sys
 
 env = SConscript("godot-cpp/SConstruct")
 
-# إعدادات C++ فقط
-env.Append(CXXFLAGS=["-std=c++20"])
+# ⚡ تفعيل كاش SCons السريع المدمج ⚡
+cache_dir = os.environ.get("SCONS_CACHE_DIR", ".scons-cache")
+if cache_dir:
+    CacheDir(cache_dir)
 
-# إعدادات C فقط
+# إعدادات C++20 و C
+env.Append(CXXFLAGS=["-std=c++20"])
 env.Append(CFLAGS=["-std=c11"])
 
-# خيارات مشتركة
 if env["platform"] == "android":
     env.Append(CCFLAGS=["-fPIC", "-O3", "-pthread"])
 else:
