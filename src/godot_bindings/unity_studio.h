@@ -9,7 +9,6 @@
 
 #include "unity_fs.h"
 #include "serialized_file.h"
-#include "unity_scene.h"
 
 namespace godot {
 
@@ -18,7 +17,7 @@ class UnityStudio : public RefCounted {
 
 private:
     UnityFSArchive current_archive;
-    SerializedFile current_serialized_file;
+    std::vector<SerializedFile> loaded_files; // جميع الملفات المفككة
     bool is_loaded = false;
 
 protected:
