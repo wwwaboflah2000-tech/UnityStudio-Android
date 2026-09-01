@@ -3,14 +3,18 @@ import sys
 
 env = SConscript("godot-cpp/SConstruct")
 
-# إعدادات المترجم C++20 وتفعيل تحسينات الأداء القصوى
-if env["platform"] == "android":
-    env.Append(CCFLAGS=["-std=c++20", "-fPIC", "-O3", "-pthread"])
-    env.Append(CFLAGS=["-O3"])
-else:
-    env.Append(CCFLAGS=["-std=c++20", "-O3"])
+# إعدادات C++ فقط
+env.Append(CXXFLAGS=["-std=c++20"])
 
-# تضمين مسارات الكود
+# إعدادات C فقط
+env.Append(CFLAGS=["-std=c11"])
+
+# خيارات مشتركة
+if env["platform"] == "android":
+    env.Append(CCFLAGS=["-fPIC", "-O3", "-pthread"])
+else:
+    env.Append(CCFLAGS=["-O3"])
+
 env.Append(CPPPATH=[
     "src/",
     "src/godot_bindings/",
@@ -20,9 +24,7 @@ env.Append(CPPPATH=[
     "src/exporters/"
 ])
 
-# جمع كافة ملفات C و C++
 sources = Glob("src/*.cpp") + Glob("src/**/*.cpp") + Glob("src/**/*.c")
-
 output_dir = "godot_project/bin/"
 
 if env["platform"] == "android":
