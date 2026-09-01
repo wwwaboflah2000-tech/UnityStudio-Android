@@ -1,0 +1,11 @@
+[configuration]
+entry_symbol = "unity_studio_init"
+compatibility_minimum = "4.1"
+
+[libraries]
+android.arm64.template_debug   = "res://bin/libunitystudio.android.template_debug.arm64.so"
+android.arm64.template_release = "res://bin/libunitystudio.android.template_release.arm64.so"
+linux.x86_64.template_debug    = "res://bin/libunitystudio.linux.template_debug.x86_64.so"
+linux.x86_64.template_release  = "res://bin/libunitystudio.linux.template_release.x86_64.so"
+windows.x86_64.template_debug  = "res://bin/libunitystudio.windows.template_debug.x86_64.dll"
+windows.x86_64.template_release= "res://bin/libunitystudio.windows.template_release.x86_64.dll"
