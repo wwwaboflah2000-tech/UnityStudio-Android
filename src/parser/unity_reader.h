@@ -41,6 +41,7 @@ public:
         }
     }
 
+    // 8-bit
     uint8_t read_u8() {
         if (position + 1 > size) {
             has_error = true;
@@ -49,6 +50,54 @@ public:
         return data[position++];
     }
 
+    int8_t read_i8() {
+        return static_cast<int8_t>(read_u8());
+    }
+
+    // 16-bit Little Endian
+    uint16_t read_u16_le() {
+        if (position + 2 > size) {
+            has_error = true;
+            return 0;
+        }
+        uint16_t val = 0;
+        std::memcpy(&val, data + position, 2);
+        position += 2;
+        return val;
+    }
+
+    int16_t read_i16_le() {
+        return static_cast<int16_t>(read_u16_le());
+    }
+
+    // 16-bit Big Endian
+    uint16_t read_u16_be() {
+        if (position + 2 > size) {
+            has_error = true;
+            return 0;
+        }
+        uint16_t val = (uint16_t(data[position]) << 8) | uint16_t(data[position + 1]);
+        position += 2;
+        return val;
+    }
+
+    // 32-bit Little Endian
+    uint32_t read_u32_le() {
+        if (position + 4 > size) {
+            has_error = true;
+            return 0;
+        }
+        uint32_t val = 0;
+        std::memcpy(&val, data + position, 4);
+        position += 4;
+        return val;
+    }
+
+    int32_t read_i32_le() {
+        return static_cast<int32_t>(read_u32_le());
+    }
+
+    // 32-bit Big Endian
     uint32_t read_u32_be() {
         if (position + 4 > size) {
             has_error = true;
@@ -66,60 +115,10 @@ public:
         return static_cast<int32_t>(read_u32_be()); 
     }
 
-    uint64_t read_u64_be() {
+    // 64-bit Little Endian
+    uint64_t read_u64_le() {
         if (position + 8 > size) {
             has_error = true;
             return 0;
         }
-        uint64_t val = 0;
-        for (int i = 0; i < 8; ++i) {
-            val = (val << 8) | data[position + i];
-        }
-        position += 8;
-        return val;
-    }
-
-    uint32_t read_u32_le() {
-        if (position + 4 > size) {
-            has_error = true;
-            return 0;
-        }
-        uint32_t val = 0;
-        std::memcpy(&val, data + position, 4);
-        position += 4;
-        return val;
-    }
-
-    float read_float_le() {
-        if (position + 4 > size) {
-            has_error = true;
-            return 0.0f;
-        }
-        float val = 0.0f;
-        std::memcpy(&val, data + position, 4);
-        position += 4;
-        return val;
-    }
-
-    std::string read_string_null() {
-        std::string res;
-        while (position < size) {
-            char c = static_cast<char>(data[position++]);
-            if (c == '\0') break;
-            res += c;
-        }
-        return res;
-    }
-
-    std::vector<uint8_t> read_bytes(size_t count) {
-        if (position + count > size) {
-            has_error = true;
-            return {};
-        }
-        std::vector<uint8_t> bytes(data + position, data + position + count);
-        position += count;
-        return bytes;
-    }
-};
-
-#endif
+        uint64_t val = 0
