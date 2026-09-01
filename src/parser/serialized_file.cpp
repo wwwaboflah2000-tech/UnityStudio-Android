@@ -6,102 +6,166 @@ bool SerializedFile::parse(const uint8_t* raw_data, size_t raw_size, const std::
     file_name = name;
     UnityReader reader(raw_data, raw_size);
 
-    // فحص إصدار Unity (Header = Big Endian)
-    reader.set_position(8);
-    uint32_t v_old = reader.read_u32_be();
-    reader.set_position(12);
-    uint32_t v_new = reader.read_u32_be();
+    // 1. قراءة الترويسة (Header) - دائماً Big Endian
+    metadata_size = reader.read_u32_be();
+    file_size = static_cast<uint64_t>(reader.read_u32_be());
+    version = reader.read_u32_be();
+    data_offset = static_cast<uint64_t>(reader.read_u32_be());
 
-    if (v_new >= 22 && v_new < 100) {
-        // Unity 2020.3+ / 2021 / 2022 (64-bit Header)
+    if (version >= 9) {
+        endianess = reader.read_u8();
+        reader.read_bytes(3); // m_Reserved
+    }
+
+    // مطابقة AssetStudio: إذا كان الإصدار 22 فما فوق (Unity 2020.3+ / 2021 / 2022 / 2023)
+    if (version >= 22) {
         if (raw_size < 48) return false;
-        reader.set_position(0);
         metadata_size = reader.read_u32_be();
         file_size = reader.read_u64_be();
-        version = v_new;
-        reader.set_position(16);
         data_offset = reader.read_u64_be();
-        endianess = reader.read_u8();
-        reader.align(4);
-    } else if (v_old >= 1 && v_old < 22) {
-        // Unity 5.x إلى 2019.4 (32-bit Header) مثل The Long Drive
-        reader.set_position(0);
-        metadata_size = reader.read_u32_be();
-        file_size = static_cast<uint64_t>(reader.read_u32_be());
-        version = v_old;
-        reader.set_position(12);
-        data_offset = static_cast<uint64_t>(reader.read_u32_be());
-        endianess = reader.read_u8();
-        reader.align(4);
-    } else {
-        return false;
+        reader.read_u64_be(); // unknown 8 bytes
     }
 
     if (reader.failed()) return false;
 
-    // قراءة البيانات الوصفية (Metadata = Little Endian)
+    // 2. تحديد موقع الـ Metadata بدقة AssetStudio
+    // في بعض حزم الألعاب القديمة، توضع البيانات الوصفية في نهاية الملف
+    if (version < 9) {
+        reader.set_position(file_size - metadata_size);
+    }
+
+    // 3. قراءة معلومات المحرك والمنصة
     if (version >= 7) {
         unity_version = reader.read_string_null();
     }
     if (version >= 8) {
-        reader.read_u32_le(); // Target Platform
+        reader.read_i32_le(); // m_TargetPlatform
     }
 
-    // قراءة الـ TypeTree
+    bool enable_type_tree = false;
     if (version >= 13) {
-        bool enable_type_tree = reader.read_u8() != 0;
-        int32_t type_count = reader.read_i32_le();
+        enable_type_tree = reader.read_u8() != 0;
+    }
 
-        if (type_count > 0 && type_count < 100000) {
-            for (int32_t i = 0; i < type_count; ++i) {
-                int32_t class_id = reader.read_i32_le();
-                if (version >= 16) {
-                    reader.read_u8();
-                }
-                int16_t script_type_index = -1;
-                if (version >= 17) {
-                    script_type_index = static_cast<int16_t>(reader.read_u16_le());
-                }
+    // 4. قراءة جدول الأنواع (m_Types) مطابق لـ AssetStudio
+    int32_t type_count = reader.read_i32_le();
+    if (type_count < 0 || type_count > 100000) return false;
 
-                if ((version < 16 && class_id < 0) || (version >= 16 && class_id == 114) || (version >= 17 && script_type_index >= 0)) {
-                    reader.read_bytes(16);
+    for (int32_t i = 0; i < type_count; ++i) {
+        int32_t class_id = reader.read_i32_le();
+        
+        if (version >= 16) {
+            reader.read_u8(); // m_IsStrippedType
+        }
+        
+        int16_t script_type_index = -1;
+        if (version >= 17) {
+            script_type_index = reader.read_i16_le();
+        }
+
+        if (version >= 13) {
+            if ((version < 16 && class_id < 0) || (version >= 16 && class_id == 114) || (version >= 17 && script_type_index >= 0)) {
+                reader.read_bytes(16); // m_ScriptID (Hash128)
+            }
+            reader.read_bytes(16); // m_OldTypeHash (Hash128)
+        }
+
+        // قراءة الـ TypeTree Blob إذا كانت مدمجة
+        if (enable_type_tree) {
+            int32_t node_count = reader.read_i32_le();
+            int32_t string_buffer_size = reader.read_i32_le();
+            size_t node_size = (version >= 19) ? 32 : 24;
+            reader.read_bytes(node_count * node_size + string_buffer_size);
+
+            if (version >= 21) {
+                int32_t dep_count = reader.read_i32_le();
+                if (dep_count > 0 && dep_count < 10000) {
+                    reader.read_bytes(dep_count * 4);
                 }
+            }
+        }
+    }
+
+    // 5. قراءة الـ RefTypes المضافة في Unity 20+
+    if (version >= 20) {
+        int32_t ref_type_count = reader.read_i32_le();
+        for (int32_t i = 0; i < ref_type_count; ++i) {
+            int32_t class_id = reader.read_i32_le();
+            if (version >= 16) reader.read_u8();
+            int16_t script_type_index = (version >= 17) ? reader.read_i16_le() : -1;
+            
+            if (version >= 13) {
+                if (script_type_index >= 0 || class_id == 114) reader.read_bytes(16);
                 reader.read_bytes(16);
-
-                if (enable_type_tree) {
-                    int32_t node_count = reader.read_i32_le();
-                    int32_t string_buffer_size = reader.read_i32_le();
-                    size_t node_size = (version >= 19) ? 32 : 24;
-                    reader.read_bytes(node_count * node_size + string_buffer_size);
+            }
+            if (enable_type_tree) {
+                int32_t node_count = reader.read_i32_le();
+                int32_t string_buffer_size = reader.read_i32_le();
+                size_t node_size = (version >= 19) ? 32 : 24;
+                reader.read_bytes(node_count * node_size + string_buffer_size);
+            }
+            reader.read_string_null(); // m_ClassName
+            reader.read_string_null(); // m_Namespace
+            reader.read_string_null(); // m_AssemblyName
+            
+            if (version >= 21) {
+                int32_t dep_count = reader.read_i32_le();
+                if (dep_count > 0 && dep_count < 10000) {
+                    reader.read_bytes(dep_count * 4);
                 }
             }
         }
     }
 
     if (version >= 7 && version < 14) {
-        reader.read_u32_le();
+        reader.read_i32_le(); // m_BigIDEnabled
     }
 
-    // قراءة عدد الكائنات في ملف اللعبة (Little Endian)
+    // 6. قراءة جدول الكائنات والمجسمات (m_Objects)
     if (version >= 14) reader.align(4);
-    uint32_t object_count = reader.read_u32_le();
-    
-    if (object_count == 0 || object_count > 2000000 || reader.failed()) return false;
-    
+    int32_t object_count = reader.read_i32_le();
+
+    if (object_count <= 0 || object_count > 2000000 || reader.failed()) return false;
+
     objects.resize(object_count);
 
-    // قراءة مصفوفة الكائنات والمجسمات بالكامل (Little Endian)
-    for (uint32_t i = 0; i < object_count; ++i) {
+    for (int32_t i = 0; i < object_count; ++i) {
         if (version >= 14) reader.align(4);
 
-        objects[i].path_id = (version >= 14) ? reader.read_i64_le() : static_cast<int64_t>(reader.read_i32_le());
-        objects[i].byte_start = (version >= 22) ? reader.read_u64_le() : static_cast<uint64_t>(reader.read_u32_le());
+        // قراءة PathID
+        if (version >= 14) {
+            objects[i].path_id = reader.read_i64_le();
+        } else {
+            objects[i].path_id = static_cast<int64_t>(reader.read_i32_le());
+        }
+
+        // قراءة موقع وحجم الكائن
+        if (version >= 22) {
+            objects[i].byte_start = reader.read_u64_le();
+        } else {
+            objects[i].byte_start = static_cast<uint64_t>(reader.read_u32_le());
+        }
+        
         objects[i].byte_start += data_offset;
         objects[i].byte_size = reader.read_u32_le();
         objects[i].type_id = reader.read_i32_le();
-        objects[i].class_id = objects[i].type_id;
-        objects[i].source_file = file_name;
 
+        // في AssetStudio: إذا كان الإصدار أقل من 16، الـ ClassID يقرأ من حقل منفصل
+        if (version < 16) {
+            objects[i].class_id = reader.read_u16_le();
+            reader.read_u16_le(); // m_IsDestroyed
+        } else {
+            objects[i].class_id = objects[i].type_id;
+        }
+
+        if (version >= 11 && version < 17) {
+            reader.read_u16_le(); // m_ScriptTypeIndex
+        }
+        if (version >= 15 && version < 17) {
+            reader.read_u8(); // m_Stripped
+        }
+
+        objects[i].source_file = file_name;
         path_id_to_index[objects[i].path_id] = i;
     }
 
