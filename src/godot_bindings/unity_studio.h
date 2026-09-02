@@ -6,7 +6,6 @@
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/audio_stream_wav.hpp>
-#include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -42,11 +41,10 @@ public:
 
     int64_t get_object_count();
     Array get_game_objects_list();
+    Array get_scene_hierarchy();
 
-    // ⚡ دوال الفك والمعاينة الخارقة ⚡
     String get_text_asset(int64_t path_id);
     Ref<Image> get_texture_image(int64_t path_id);
-    Ref<AudioStreamWAV> get_audio_stream(int64_t path_id);
     Ref<ArrayMesh> get_mesh(int64_t path_id);
 };
 
