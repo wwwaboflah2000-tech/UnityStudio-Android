@@ -1,13 +1,13 @@
 #include "unity_objects.h"
 
-// === 1. قراءة المجسمات الحقيقية (ChannelInfo & VertexData) ===
+// === 1. قراءة مجسمات Unity 2021 بدقة AssetStudio الكاملة ===
 bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
     if (!data || size < 24) return false;
     UnityReader reader(data, size);
 
     name = reader.read_string_aligned();
 
-    // SubMeshes
+    // 1. SubMeshes
     int32_t submesh_count = reader.read_i32_le();
     if (submesh_count > 0 && submesh_count < 1000) {
         for (int i = 0; i < submesh_count; ++i) {
@@ -15,27 +15,65 @@ bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
         }
     }
 
-    // Index Buffer (Triangles)
-    reader.align(4);
+    // 2. BlendShapes (m_Shapes)
+    if (version >= 43) {
+        int32_t num_verts = reader.read_i32_le();
+        if (num_verts > 0) reader.read_bytes(num_verts * 40);
+        int32_t num_shapes = reader.read_i32_le();
+        if (num_shapes > 0) reader.read_bytes(num_shapes * 36);
+        int32_t num_channels = reader.read_i32_le();
+        if (num_channels > 0) reader.read_bytes(num_channels * 36);
+        int32_t num_weights = reader.read_i32_le();
+        if (num_weights > 0) reader.read_bytes(num_weights * 4);
+    }
+
+    // 3. BindPoses
+    if (version >= 50) {
+        int32_t num_bind_poses = reader.read_i32_le();
+        if (num_bind_poses > 0) reader.read_bytes(num_bind_poses * 64);
+        int32_t num_bone_hashes = reader.read_i32_le();
+        if (num_bone_hashes > 0) reader.read_bytes(num_bone_hashes * 4);
+        reader.read_u32_le(); // root_bone_name_hash
+    }
+
+    // 4. BonesAABB (Unity 2019+)
+    if (version >= 2019) {
+        int32_t num_bones_aabb = reader.read_i32_le();
+        if (num_bones_aabb > 0) reader.read_bytes(num_bones_aabb * 24);
+        int32_t num_var_weights = reader.read_i32_le();
+        if (num_var_weights > 0) reader.read_bytes(num_var_weights * 4);
+    }
+
+    // 5. MeshCompression & StreamData
+    reader.read_u8(); // mesh_compression
+    if (version >= 2018) {
+        reader.read_u64_le(); // stream offset
+        reader.read_u32_le(); // stream size
+        reader.read_string_aligned(); // stream path
+    }
+
+    // 6. Index Buffer (المثلثات)
     int32_t index_data_size = reader.read_i32_le();
-    if (index_data_size > 0 && index_data_size < static_cast<int32_t>(size - reader.get_position())) {
+    if (index_data_size > 0 && index_data_size <= static_cast<int32_t>(size - reader.get_position())) {
         int32_t num_indices = index_data_size / 2; // 16-bit indices
         indices.resize(num_indices);
         for (int i = 0; i < num_indices; ++i) {
             indices[i] = reader.read_u16_le();
         }
     }
+    reader.align(4);
 
-    if (version < 2018) {
-        reader.align(4);
+    // 7. Skin (BoneWeights)
+    if (version >= 2018) {
+        int32_t num_skin = reader.read_i32_le();
+        if (num_skin > 0) reader.read_bytes(num_skin * 32);
     }
 
-    // Vertex Data (m_VertexData)
-    reader.align(4);
-    int32_t vertex_count = 0;
+    // 8. VertexData (النقاط ثلاثية الأبعاد)
+    reader.read_u32_le(); // current_channels
+    int32_t vertex_count = reader.read_i32_le();
     
     if (version >= 2018) {
-        vertex_count = reader.read_i32_le();
         int32_t channel_count = reader.read_i32_le();
         ChannelInfo channels[16];
         for (int i = 0; i < channel_count && i < 16; ++i) {
@@ -60,17 +98,6 @@ bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
                     memcpy(&vz, vdata.data() + (i * stride) + channels[0].offset + 8, 4);
                     vertices[i] = Vector3(vx, vy, -vz); // تحويل لمحاور Godot
                 }
-            }
-        }
-    } else {
-        vertex_count = reader.read_i32_le();
-        if (vertex_count > 0 && vertex_count < 500000) {
-            vertices.resize(vertex_count);
-            for (int i = 0; i < vertex_count; ++i) {
-                float vx = reader.read_float_le();
-                float vy = reader.read_float_le();
-                float vz = reader.read_float_le();
-                vertices[i] = Vector3(vx, vy, -vz);
             }
         }
     }
@@ -107,7 +134,7 @@ Ref<ArrayMesh> UnityMesh::create_godot_mesh() {
     return mesh;
 }
 
-// === 2. قراءة GameObject و Transform لبناء الشجرة ===
+// === 2. قراءة GameObject و Transform ===
 bool UnityGameObject::parse(const uint8_t* data, size_t size, int version) {
     if (!data || size < 8) return false;
     UnityReader reader(data, size);
@@ -172,9 +199,9 @@ bool UnityTexture2D::parse(const uint8_t* data, size_t size, int version) {
     name = reader.read_string_aligned();
     width = reader.read_i32_le();
     height = reader.read_i32_le();
-    reader.read_i32_le(); // complete_image_size
+    reader.read_i32_le();
     texture_format = reader.read_i32_le();
-    if (version >= 52) reader.read_i32_le(); // mip_count
+    if (version >= 52) reader.read_i32_le();
 
     reader.align(4);
     int32_t image_data_size = reader.read_i32_le();
