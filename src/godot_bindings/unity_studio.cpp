@@ -15,6 +15,7 @@ void UnityStudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_text_asset", "path_id"), &UnityStudio::get_text_asset);
     ClassDB::bind_method(D_METHOD("get_texture_image", "path_id"), &UnityStudio::get_texture_image);
     ClassDB::bind_method(D_METHOD("get_mesh", "path_id"), &UnityStudio::get_mesh);
+    ClassDB::bind_method(D_METHOD("build_game_object_model", "go_path_id"), &UnityStudio::build_game_object_model);
 }
 
 UnityStudio::UnityStudio() {}
@@ -110,14 +111,11 @@ Array UnityStudio::get_game_objects_list() {
     return result;
 }
 
-// ⚡ استخراج وبناء شجرة الـ Scene Hierarchy بالكامل مطابق لـ AssetStudio ⚡
 Array UnityStudio::get_scene_hierarchy() {
     Array root_nodes;
     std::unordered_map<int64_t, UnityGameObject> game_objects;
     std::unordered_map<int64_t, UnityTransform> transforms;
-    std::unordered_map<int64_t, int64_t> transform_to_gameobject;
 
-    // 1. قراءة جميع كائنات GameObject و Transform
     for (const auto& sfile : loaded_files) {
         for (const auto& obj : sfile.objects) {
             uint32_t size = 0;
@@ -134,18 +132,15 @@ Array UnityStudio::get_scene_hierarchy() {
                 UnityTransform tr;
                 if (tr.parse(data, size, version)) {
                     transforms[obj.path_id] = tr;
-                    transform_to_gameobject[obj.path_id] = tr.game_object_path_id;
                 }
             }
         }
     }
 
-    // 2. تجميع الشجرة وربط الأبناء بالجذور
     for (const auto& pair : transforms) {
         int64_t tr_id = pair.first;
         const auto& tr = pair.second;
 
-        // إذا كان الجذر ليس له أب (Root GameObject)
         if (tr.father_path_id == 0) {
             auto go_it = game_objects.find(tr.game_object_path_id);
             if (go_it != game_objects.end()) {
@@ -159,6 +154,47 @@ Array UnityStudio::get_scene_hierarchy() {
     }
 
     return root_nodes;
+}
+
+// ⚡ بناء وتجميع مجسم السيارة الكامل وجميع أجزائها في مشهد Godot ⚡
+Node3D* UnityStudio::build_game_object_model(int64_t go_path_id) {
+    Node3D* root_node = memnew(Node3D);
+
+    uint32_t go_size = 0;
+    int version = 0;
+    const uint8_t* go_data = get_object_data(go_path_id, go_size, version);
+    if (!go_data) return root_node;
+
+    UnityGameObject go;
+    if (!go.parse(go_data, go_size, version)) return root_node;
+
+    root_node->set_name(String::utf8(go.name.c_str()));
+
+    // البحث في مكونات الـ GameObject عن MeshFilter أو Mesh مباشرة
+    for (const auto& comp : go.components) {
+        uint32_t comp_size = 0;
+        const uint8_t* comp_data = get_object_data(comp.path_id, comp_size, version);
+        if (!comp_data) continue;
+
+        // قراءة MeshFilter
+        UnityReader comp_reader(comp_data, comp_size);
+        comp_reader.read_i32_le(); // game_object file_id
+        if (version >= 14) comp_reader.read_i64_le(); else comp_reader.read_i32_le(); // go path_id
+        
+        comp_reader.read_i32_le(); // mesh file_id
+        int64_t mesh_path_id = (version >= 14) ? comp_reader.read_i64_le() : static_cast<int64_t>(comp_reader.read_i32_le());
+
+        if (mesh_path_id != 0) {
+            Ref<ArrayMesh> mesh_res = get_mesh(mesh_path_id);
+            if (mesh_res.is_valid()) {
+                MeshInstance3D* mi = memnew(MeshInstance3D);
+                mi->set_mesh(mesh_res);
+                root_node->add_child(mi);
+            }
+        }
+    }
+
+    return root_node;
 }
 
 String UnityStudio::get_text_asset(int64_t path_id) {
