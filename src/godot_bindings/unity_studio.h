@@ -5,7 +5,8 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/array_mesh.hpp>
-#include <godot_cpp/classes/audio_stream_wav.hpp>
+#include <godot_cpp/classes/node3d.hpp>
+#include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -46,6 +47,9 @@ public:
     String get_text_asset(int64_t path_id);
     Ref<Image> get_texture_image(int64_t path_id);
     Ref<ArrayMesh> get_mesh(int64_t path_id);
+    
+    // ⚡ توليد مجسمات الـ 3D المجمعة للسيارات والشخصيات ⚡
+    Node3D* build_game_object_model(int64_t go_path_id);
 };
 
 } // namespace godot
