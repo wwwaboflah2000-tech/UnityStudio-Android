@@ -1,6 +1,6 @@
 #include "unity_studio.h"
 #include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/variant/utility_functions.hpp>
+#include <unordered_map>
 
 using namespace godot;
 
@@ -10,11 +10,10 @@ void UnityStudio::_bind_methods() {
     ClassDB::bind_method(D_METHOD("clear_all"), &UnityStudio::clear_all);
     ClassDB::bind_method(D_METHOD("get_object_count"), &UnityStudio::get_object_count);
     ClassDB::bind_method(D_METHOD("get_game_objects_list"), &UnityStudio::get_game_objects_list);
+    ClassDB::bind_method(D_METHOD("get_scene_hierarchy"), &UnityStudio::get_scene_hierarchy);
 
-    // ربط دوال الفك مع Godot
     ClassDB::bind_method(D_METHOD("get_text_asset", "path_id"), &UnityStudio::get_text_asset);
     ClassDB::bind_method(D_METHOD("get_texture_image", "path_id"), &UnityStudio::get_texture_image);
-    ClassDB::bind_method(D_METHOD("get_audio_stream", "path_id"), &UnityStudio::get_audio_stream);
     ClassDB::bind_method(D_METHOD("get_mesh", "path_id"), &UnityStudio::get_mesh);
 }
 
@@ -34,7 +33,6 @@ const uint8_t* UnityStudio::get_object_data(int64_t path_id, uint32_t &out_size,
             const auto& obj = sfile.objects[it->second];
             out_size = obj.byte_size;
             out_version = sfile.version;
-            
             if (obj.byte_start + obj.byte_size <= static_cast<uint64_t>(raw_master_buffer.size())) {
                 return raw_master_buffer.ptr() + obj.byte_start;
             }
@@ -112,58 +110,83 @@ Array UnityStudio::get_game_objects_list() {
     return result;
 }
 
-// ⚡ فك النصوص والشيدر ⚡
+// ⚡ استخراج وبناء شجرة الـ Scene Hierarchy بالكامل مطابق لـ AssetStudio ⚡
+Array UnityStudio::get_scene_hierarchy() {
+    Array root_nodes;
+    std::unordered_map<int64_t, UnityGameObject> game_objects;
+    std::unordered_map<int64_t, UnityTransform> transforms;
+    std::unordered_map<int64_t, int64_t> transform_to_gameobject;
+
+    // 1. قراءة جميع كائنات GameObject و Transform
+    for (const auto& sfile : loaded_files) {
+        for (const auto& obj : sfile.objects) {
+            uint32_t size = 0;
+            int version = 0;
+            const uint8_t* data = get_object_data(obj.path_id, size, version);
+            if (!data) continue;
+
+            if (obj.class_id == 1) { // GameObject
+                UnityGameObject go;
+                if (go.parse(data, size, version)) {
+                    game_objects[obj.path_id] = go;
+                }
+            } else if (obj.class_id == 4) { // Transform
+                UnityTransform tr;
+                if (tr.parse(data, size, version)) {
+                    transforms[obj.path_id] = tr;
+                    transform_to_gameobject[obj.path_id] = tr.game_object_path_id;
+                }
+            }
+        }
+    }
+
+    // 2. تجميع الشجرة وربط الأبناء بالجذور
+    for (const auto& pair : transforms) {
+        int64_t tr_id = pair.first;
+        const auto& tr = pair.second;
+
+        // إذا كان الجذر ليس له أب (Root GameObject)
+        if (tr.father_path_id == 0) {
+            auto go_it = game_objects.find(tr.game_object_path_id);
+            if (go_it != game_objects.end()) {
+                Dictionary node;
+                node["path_id"] = go_it->first;
+                node["name"] = String::utf8(go_it->second.name.c_str());
+                node["transform_id"] = tr_id;
+                root_nodes.push_back(node);
+            }
+        }
+    }
+
+    return root_nodes;
+}
+
 String UnityStudio::get_text_asset(int64_t path_id) {
     uint32_t size = 0;
     int version = 0;
     const uint8_t* data = get_object_data(path_id, size, version);
     if (!data) return "";
-
     UnityTextAsset text;
-    if (text.parse(data, size)) {
-        return String::utf8(text.script.c_str());
-    }
+    if (text.parse(data, size)) return String::utf8(text.script.c_str());
     return "";
 }
 
-// ⚡ فك وتوليد الصور (Texture2D) ⚡
 Ref<Image> UnityStudio::get_texture_image(int64_t path_id) {
     uint32_t size = 0;
     int version = 0;
     const uint8_t* data = get_object_data(path_id, size, version);
     if (!data) return Ref<Image>();
-
     UnityTexture2D tex;
-    if (tex.parse(data, size, version)) {
-        return tex.create_godot_image();
-    }
+    if (tex.parse(data, size, version)) return tex.create_godot_image();
     return Ref<Image>();
 }
 
-// ⚡ فك وتوليد الصوتيات (AudioClip) ⚡
-Ref<AudioStreamWAV> UnityStudio::get_audio_stream(int64_t path_id) {
-    uint32_t size = 0;
-    int version = 0;
-    const uint8_t* data = get_object_data(path_id, size, version);
-    if (!data) return Ref<AudioStreamWAV>();
-
-    UnityAudioClip audio;
-    if (audio.parse(data, size, version)) {
-        return audio.create_godot_audio();
-    }
-    return Ref<AudioStreamWAV>();
-}
-
-// ⚡ فك وتوليد شبكة المجسمات (3D Mesh) ⚡
 Ref<ArrayMesh> UnityStudio::get_mesh(int64_t path_id) {
     uint32_t size = 0;
     int version = 0;
     const uint8_t* data = get_object_data(path_id, size, version);
     if (!data) return Ref<ArrayMesh>();
-
     UnityMesh mesh;
-    if (mesh.parse(data, size, version)) {
-        return mesh.create_godot_mesh();
-    }
+    if (mesh.parse(data, size, version)) return mesh.create_godot_mesh();
     return Ref<ArrayMesh>();
 }
