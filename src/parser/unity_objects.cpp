@@ -1,6 +1,6 @@
 #include "unity_objects.h"
 
-// === 1. قراءة مجسمات Unity 2021 بدقة AssetStudio الكاملة ===
+// === 1. قراءة مجسمات Unity بدقة تسلسل Format Version (v17 - v22) ===
 bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
     if (!data || size < 24) return false;
     UnityReader reader(data, size);
@@ -11,12 +11,12 @@ bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
     int32_t submesh_count = reader.read_i32_le();
     if (submesh_count > 0 && submesh_count < 1000) {
         for (int i = 0; i < submesh_count; ++i) {
-            reader.read_bytes(version >= 2017 ? 48 : 36);
+            reader.read_bytes(version >= 17 ? 48 : 36);
         }
     }
 
     // 2. BlendShapes (m_Shapes)
-    if (version >= 43) {
+    if (version >= 9) {
         int32_t num_verts = reader.read_i32_le();
         if (num_verts > 0) reader.read_bytes(num_verts * 40);
         int32_t num_shapes = reader.read_i32_le();
@@ -28,7 +28,7 @@ bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
     }
 
     // 3. BindPoses
-    if (version >= 50) {
+    if (version >= 9) {
         int32_t num_bind_poses = reader.read_i32_le();
         if (num_bind_poses > 0) reader.read_bytes(num_bind_poses * 64);
         int32_t num_bone_hashes = reader.read_i32_le();
@@ -36,8 +36,8 @@ bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
         reader.read_u32_le(); // root_bone_name_hash
     }
 
-    // 4. BonesAABB (Unity 2019+)
-    if (version >= 2019) {
+    // 4. BonesAABB
+    if (version >= 19) {
         int32_t num_bones_aabb = reader.read_i32_le();
         if (num_bones_aabb > 0) reader.read_bytes(num_bones_aabb * 24);
         int32_t num_var_weights = reader.read_i32_le();
@@ -46,7 +46,7 @@ bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
 
     // 5. MeshCompression & StreamData
     reader.read_u8(); // mesh_compression
-    if (version >= 2018) {
+    if (version >= 17) {
         reader.read_u64_le(); // stream offset
         reader.read_u32_le(); // stream size
         reader.read_string_aligned(); // stream path
@@ -63,8 +63,8 @@ bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
     }
     reader.align(4);
 
-    // 7. Skin (BoneWeights)
-    if (version >= 2018) {
+    // 7. Skin
+    if (version >= 17) {
         int32_t num_skin = reader.read_i32_le();
         if (num_skin > 0) reader.read_bytes(num_skin * 32);
     }
@@ -73,7 +73,7 @@ bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
     reader.read_u32_le(); // current_channels
     int32_t vertex_count = reader.read_i32_le();
     
-    if (version >= 2018) {
+    if (version >= 17) {
         int32_t channel_count = reader.read_i32_le();
         ChannelInfo channels[16];
         for (int i = 0; i < channel_count && i < 16; ++i) {
@@ -96,7 +96,7 @@ bool UnityMesh::parse(const uint8_t* data, size_t size, int version) {
                     memcpy(&vx, vdata.data() + (i * stride) + channels[0].offset, 4);
                     memcpy(&vy, vdata.data() + (i * stride) + channels[0].offset + 4, 4);
                     memcpy(&vz, vdata.data() + (i * stride) + channels[0].offset + 8, 4);
-                    vertices[i] = Vector3(vx, vy, -vz); // تحويل لمحاور Godot
+                    vertices[i] = Vector3(vx, vy, -vz);
                 }
             }
         }
