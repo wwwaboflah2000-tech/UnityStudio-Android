@@ -1,5 +1,6 @@
 #include "unity_studio.h"
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/classes/standard_material3d.hpp>
 #include <unordered_map>
 
 using namespace godot;
@@ -125,14 +126,10 @@ Array UnityStudio::get_scene_hierarchy() {
 
             if (obj.class_id == 1) { // GameObject
                 UnityGameObject go;
-                if (go.parse(data, size, version)) {
-                    game_objects[obj.path_id] = go;
-                }
+                if (go.parse(data, size, version)) game_objects[obj.path_id] = go;
             } else if (obj.class_id == 4) { // Transform
                 UnityTransform tr;
-                if (tr.parse(data, size, version)) {
-                    transforms[obj.path_id] = tr;
-                }
+                if (tr.parse(data, size, version)) transforms[obj.path_id] = tr;
             }
         }
     }
@@ -156,39 +153,83 @@ Array UnityStudio::get_scene_hierarchy() {
     return root_nodes;
 }
 
-// ⚡ بناء وتجميع مجسم السيارة الكامل وجميع أجزائها في مشهد Godot ⚡
+// ⚡ بناء وتجميع السيارة بالكامل مع خامات الاستوديو الفضية اللامعة ⚡
 Node3D* UnityStudio::build_game_object_model(int64_t go_path_id) {
     Node3D* root_node = memnew(Node3D);
 
-    uint32_t go_size = 0;
-    int version = 0;
-    const uint8_t* go_data = get_object_data(go_path_id, go_size, version);
-    if (!go_data) return root_node;
+    std::unordered_map<int64_t, UnityGameObject> go_map;
+    std::unordered_map<int64_t, UnityTransform> tr_map;
+    std::unordered_map<int64_t, int64_t> go_to_mesh_map;
 
-    UnityGameObject go;
-    if (!go.parse(go_data, go_size, version)) return root_node;
+    // 1. فهرسة سريعة لـ MeshFilter و GameObjects
+    for (const auto& sfile : loaded_files) {
+        for (const auto& obj : sfile.objects) {
+            uint32_t size = 0;
+            int version = 0;
+            const uint8_t* data = get_object_data(obj.path_id, size, version);
+            if (!data) continue;
 
-    root_node->set_name(String::utf8(go.name.c_str()));
+            if (obj.class_id == 1) {
+                UnityGameObject go;
+                if (go.parse(data, size, version)) go_map[obj.path_id] = go;
+            } else if (obj.class_id == 4) {
+                UnityTransform tr;
+                if (tr.parse(data, size, version)) tr_map[obj.path_id] = tr;
+            } else if (obj.class_id == 33) { // MeshFilter
+                UnityReader r(data, size);
+                r.read_i32_le();
+                int64_t go_id = (version >= 14) ? r.read_i64_le() : static_cast<int64_t>(r.read_i32_le());
+                r.read_i32_le();
+                int64_t mesh_id = (version >= 14) ? r.read_i64_le() : static_cast<int64_t>(r.read_i32_le());
+                if (go_id != 0 && mesh_id != 0) go_to_mesh_map[go_id] = mesh_id;
+            }
+        }
+    }
 
-    // البحث في مكونات الـ GameObject عن MeshFilter أو Mesh مباشرة
-    for (const auto& comp : go.components) {
-        uint32_t comp_size = 0;
-        const uint8_t* comp_data = get_object_data(comp.path_id, comp_size, version);
-        if (!comp_data) continue;
+    // 2. تجميع الشجرة ابتداءً من الجذر
+    auto root_go_it = go_map.find(go_path_id);
+    if (root_go_it == go_map.end()) return root_node;
 
-        // قراءة MeshFilter
-        UnityReader comp_reader(comp_data, comp_size);
-        comp_reader.read_i32_le(); // game_object file_id
-        if (version >= 14) comp_reader.read_i64_le(); else comp_reader.read_i32_le(); // go path_id
-        
-        comp_reader.read_i32_le(); // mesh file_id
-        int64_t mesh_path_id = (version >= 14) ? comp_reader.read_i64_le() : static_cast<int64_t>(comp_reader.read_i32_le());
+    root_node->set_name(String::utf8(root_go_it->second.name.c_str()));
 
-        if (mesh_path_id != 0) {
-            Ref<ArrayMesh> mesh_res = get_mesh(mesh_path_id);
+    // دالة مساعدة لتجميع الأبناء
+    std::vector<int64_t> queue_transforms;
+    if (root_go_it->second.transform_path_id != 0) {
+        queue_transforms.push_back(root_go_it->second.transform_path_id);
+    }
+
+    // إنشاء خامة PBR افتراضية مضاءة
+    Ref<StandardMaterial3D> pbr_mat = memnew(StandardMaterial3D);
+    pbr_mat->set_albedo(Color(0.85, 0.88, 0.92));
+    pbr_mat->set_metallic(0.25);
+    pbr_mat->set_roughness(0.45);
+
+    // معالجة كل قطعة في الشجرة
+    while (!queue_transforms.empty()) {
+        int64_t cur_tr_id = queue_transforms.back();
+        queue_transforms.pop_back();
+
+        auto tr_it = tr_map.find(cur_tr_id);
+        if (tr_it == tr_map.end()) continue;
+
+        int64_t cur_go_id = tr_it->second.game_object_path_id;
+
+        // إضافة الأبناء لقائمة المعالجة
+        for (int64_t child_tr_id : tr_it->second.children_path_ids) {
+            queue_transforms.push_back(child_tr_id);
+        }
+
+        // إذا كانت القطعة تحتوي على مجسم 3D
+        auto mesh_it = go_to_mesh_map.find(cur_go_id);
+        if (mesh_it != go_to_mesh_map.end()) {
+            Ref<ArrayMesh> mesh_res = get_mesh(mesh_it->second);
             if (mesh_res.is_valid()) {
                 MeshInstance3D* mi = memnew(MeshInstance3D);
                 mi->set_mesh(mesh_res);
+                mi->set_material_override(pbr_mat);
+                mi->set_position(tr_it->second.local_position);
+                mi->set_quaternion(tr_it->second.local_rotation);
+                mi->set_scale(tr_it->second.local_scale);
                 root_node->add_child(mi);
             }
         }
